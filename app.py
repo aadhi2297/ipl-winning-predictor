@@ -12,11 +12,9 @@ st.set_page_config(page_title="IPL Win Predictor (Live)", page_icon="🏏", layo
 # --- Path Setup ---
 BASE_DIR = os.path.dirname(__file__)
 pipe_path = os.path.join(BASE_DIR, "pipe.pkl")
-img_path = os.path.join(BASE_DIR, "ipl.png")
 
 # --- Branding ---
 st.sidebar.image("ipl.png", use_container_width=True)
-
 st.sidebar.markdown("### Developed by: Aadhi")
 st.sidebar.markdown("Predict live IPL match win probabilities using ML & live cricket data.")
 
@@ -98,15 +96,42 @@ st.markdown("<h1 style='text-align:center;color:#ff4b4b;'>🏏 IPL Win Predictor
 live_mode = st.sidebar.toggle("Live Mode", value=False)
 poll_secs = st.sidebar.slider("Auto-refresh every (sec)", 10, 120, 30, step=5)
 
+# --- Live Mode ---
 if live_mode:
     matches = fetch_live_matches()
     if matches:
         live_idx = st.selectbox("Select Live Match", range(len(matches)), format_func=lambda i: matches[i][1])
         match_id, match_title = matches[live_idx]
         sc = fetch_score(match_id)
-        batting_team = team_name_map.get((sc.get("team") or "").lower(), list(teams.keys())[0])
-        bowling_team = [t for t in teams.keys() if t != batting_team][0]
-        selected_city = st.selectbox("Host City", cities)
+
+        # --- Preprocessor & Categorical Encoder ---
+        preprocessor_name = list(pipe.named_steps.keys())[0]
+        preprocessor = pipe.named_steps[preprocessor_name]
+        cat_encoder = preprocessor.transformers_[0][1]
+
+        # --- Batting Team ---
+        batting_team_api = (sc.get("team") or "").strip()
+        if batting_team_api not in cat_encoder.categories_[0]:
+            fallback = cat_encoder.categories_[0][0]
+            st.warning(f"Batting team '{batting_team_api}' not in training data. Using fallback: {fallback}")
+            batting_team = fallback
+        else:
+            batting_team = batting_team_api
+
+        # --- Bowling Team ---
+        bowling_team_candidates = [t for t in cat_encoder.categories_[0] if t != batting_team]
+        bowling_team = bowling_team_candidates[0] if bowling_team_candidates else cat_encoder.categories_[0][0]
+
+        # --- City ---
+        selected_city_api = st.selectbox("Host City", cities)
+        if selected_city_api not in cat_encoder.categories_[2]:
+            fallback_city = cat_encoder.categories_[2][0]
+            st.warning(f"City '{selected_city_api}' not in training data. Using fallback: {fallback_city}")
+            selected_city = fallback_city
+        else:
+            selected_city = selected_city_api
+
+        # --- Target / Score ---
         target = sc.get("target") or st.number_input("Target Score", min_value=1, step=1, value=150)
         score = sc.get("runs") or 0
         overs = sc.get("overs") or 0.0
@@ -115,6 +140,7 @@ if live_mode:
         st.warning("No live matches right now.")
         live_mode = False
 
+# --- Manual Mode ---
 if not live_mode:
     col1, col2 = st.columns(2)
     with col1:
@@ -131,7 +157,7 @@ if not live_mode:
     with col5:
         wickets = st.number_input("Wickets", min_value=0, max_value=10, step=1)
 
-# --- Prediction ---
+# --- Prediction Block ---
 if overs == 0:
     st.warning("Enter overs > 0 to predict.")
 elif score > target:
@@ -145,25 +171,27 @@ else:
     crr = score / overs if overs > 0 else 0
     rrr = (runs_left * 6) / balls_left if balls_left > 0 else 0
 
-    # --- Ensure categorical values are valid ---
-    cat_features = ['batting_team', 'bowling_team', 'city']
-    for col, val in zip(cat_features, [batting_team, bowling_team, selected_city]):
-        if col in pipe.named_steps['pre'].transformers_[0][1].categories_[0]:
-            continue
-        # Fallback to first known category
-        if col == 'batting_team' or col == 'bowling_team':
-            fallback = pipe.named_steps['pre'].transformers_[0][1].categories_[0][0]
+    # --- Validate Categorical Inputs ---
+    preprocessor_name = list(pipe.named_steps.keys())[0]
+    preprocessor = pipe.named_steps[preprocessor_name]
+    cat_encoder = preprocessor.transformers_[0][1]
+
+    cat_cols = ['batting_team', 'bowling_team', 'city']
+    cat_vals = [batting_team, bowling_team, selected_city]
+
+    for i, (col, val) in enumerate(zip(cat_cols, cat_vals)):
+        encoder_categories = cat_encoder.categories_[i]
+        if val not in encoder_categories:
+            fallback = encoder_categories[0]
             st.warning(f"{col} '{val}' not seen during training. Using fallback: {fallback}")
             if col == 'batting_team':
                 batting_team = fallback
-            else:
+            elif col == 'bowling_team':
                 bowling_team = fallback
-        elif col == 'city':
-            fallback = pipe.named_steps['pre'].transformers_[0][1].categories_[0][0]
-            st.warning(f"{col} '{val}' not seen during training. Using fallback: {fallback}")
-            selected_city = fallback
+            else:
+                selected_city = fallback
 
-    # Prepare input
+    # --- Prepare Input DataFrame ---
     input_df = pd.DataFrame({
         "batting_team": [batting_team],
         "bowling_team": [bowling_team],
@@ -176,6 +204,7 @@ else:
         "rrr": [rrr]
     })
 
+    # --- Predict ---
     try:
         result = pipe.predict_proba(input_df)
         win_prob = float(result[0][1])
@@ -185,10 +214,11 @@ else:
         win_prob = 0.5
         loss_prob = 0.5
 
+    # --- Timeline Update ---
     st.session_state.timeline["overs"].append(round(overs, 1))
     st.session_state.timeline["win_prob"].append(round(win_prob * 100, 1))
 
-    # --- Display results ---
+    # --- Display ---
     st.markdown(f"""
     <div style="background:#f9f9f9;padding:10px;border-radius:10px;">
     <b>Batting:</b> {batting_team} | <b>Bowling:</b> {bowling_team} | <b>City:</b> {selected_city}<br>
@@ -200,32 +230,4 @@ else:
 
     commentary = []
     commentary.append("✅ RRR under control." if rrr <= crr else "⚠️ RRR above CRR.")
-    commentary.append("💪 Wickets in hand." if remaining_wickets > 3 else "🛑 Low wickets left.")
-    if runs_left <= 12 and balls_left <= 12:
-        commentary.append("🔥 Endgame: every ball counts.")
-    st.info(" ".join(commentary))
-
-    colA, colB = st.columns(2)
-    with colA:
-        st.image(teams[batting_team]['logo'], width=100)
-        st.markdown(f"<h3 style='color:{teams[batting_team]['color']};'>{batting_team}</h3>", unsafe_allow_html=True)
-        st.progress(win_prob)
-        st.success(f"{round(win_prob * 100, 1)}%")
-    with colB:
-        st.image(teams[bowling_team]['logo'], width=100)
-        st.markdown(f"<h3 style='color:{teams[bowling_team]['color']};'>{bowling_team}</h3>", unsafe_allow_html=True)
-        st.progress(loss_prob)
-        st.error(f"{round(loss_prob * 100, 1)}%")
-
-    st.subheader("📈 Win Probability Timeline")
-    fig, ax = plt.subplots()
-    ax.plot(st.session_state.timeline["overs"], st.session_state.timeline["win_prob"],
-            marker="o", color=teams[batting_team]['color'])
-    ax.set_xlabel("Overs")
-    ax.set_ylabel("Win Probability (%)")
-    ax.set_ylim(0, 100)
-    ax.grid(True)
-    st.pyplot(fig)
-
-if st.button("🔄 Reset Timeline"):
-    st.session_state.timeline.clear()
+    commentary.append("
