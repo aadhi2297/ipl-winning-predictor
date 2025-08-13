@@ -15,7 +15,8 @@ pipe_path = os.path.join(BASE_DIR, "pipe.pkl")
 img_path = os.path.join(BASE_DIR, "ipl.png")
 
 # --- Branding ---
-st.sidebar.image(img_path, use_column_width=True)
+st.sidebar.image("ipl.png", use_container_width=True)
+
 st.sidebar.markdown("### Developed by: Aadhi")
 st.sidebar.markdown("Predict live IPL match win probabilities using ML & live cricket data.")
 
