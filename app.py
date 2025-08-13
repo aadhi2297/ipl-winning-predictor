@@ -9,7 +9,7 @@ from collections import defaultdict
 # --- App Config ---
 st.set_page_config(page_title="IPL Win Predictor (Live)", page_icon="🏏", layout="wide")
 
-# --- Path Setup ---
+# --- Paths ---
 BASE_DIR = os.path.dirname(__file__)
 pipe_path = os.path.join(BASE_DIR, "pipe.pkl")
 
@@ -18,7 +18,7 @@ st.sidebar.image("ipl.png", use_container_width=True)
 st.sidebar.markdown("### Developed by: Aadhi")
 st.sidebar.markdown("Predict live IPL match win probabilities using ML & live cricket data.")
 
-# --- Team Data ---
+# --- Teams ---
 teams = {
     'Sunrisers Hyderabad': {'color': '#FF822A', 'logo': 'https://upload.wikimedia.org/wikipedia/en/8/81/Sunrisers_Hyderabad.png'},
     'Mumbai Indians': {'color': '#045093', 'logo': 'https://upload.wikimedia.org/wikipedia/en/c/cd/Mumbai_Indians_Logo.png'},
@@ -29,6 +29,7 @@ teams = {
     'Rajasthan Royals': {'color': '#254AA5', 'logo': 'https://upload.wikimedia.org/wikipedia/en/6/60/Rajasthan_Royals_Logo.png'},
     'Delhi Capitals': {'color': '#17499D', 'logo': 'https://upload.wikimedia.org/wikipedia/en/3/3f/Delhi_Capitals_Logo.png'}
 }
+
 team_name_map = {team.lower(): team for team in teams.keys()}
 
 # --- Cities ---
@@ -41,7 +42,7 @@ cities = sorted([
     'Sharjah', 'Mohali', 'Bengaluru'
 ])
 
-# --- Load Model ---
+# --- Load Pipeline ---
 with open(pipe_path, "rb") as f:
     pipe = pickle.load(f)
 
@@ -90,7 +91,7 @@ def fetch_score(match_id: str):
     except:
         return out
 
-# --- Main UI ---
+# --- UI ---
 st.markdown("<h1 style='text-align:center;color:#ff4b4b;'>🏏 IPL Win Predictor — Live Match Analysis</h1>", unsafe_allow_html=True)
 
 live_mode = st.sidebar.toggle("Live Mode", value=False)
@@ -104,34 +105,27 @@ if live_mode:
         match_id, match_title = matches[live_idx]
         sc = fetch_score(match_id)
 
-        # --- Preprocessor & Categorical Encoder ---
-        preprocessor_name = list(pipe.named_steps.keys())[0]
-        preprocessor = pipe.named_steps[preprocessor_name]
-        cat_encoder = preprocessor.transformers_[0][1]
-
         # --- Batting Team ---
         batting_team_api = (sc.get("team") or "").strip()
-        if batting_team_api not in cat_encoder.categories_[0]:
-            fallback = cat_encoder.categories_[0][0]
-            st.warning(f"Batting team '{batting_team_api}' not in training data. Using fallback: {fallback}")
-            batting_team = fallback
+        encoder = pipe.named_steps['pre'].transformers_[0][1]
+        if batting_team_api not in encoder.categories_[0]:
+            batting_team = encoder.categories_[0][0]
+            st.warning(f"Batting team '{batting_team_api}' not in training data. Using fallback: {batting_team}")
         else:
             batting_team = batting_team_api
 
         # --- Bowling Team ---
-        bowling_team_candidates = [t for t in cat_encoder.categories_[0] if t != batting_team]
-        bowling_team = bowling_team_candidates[0] if bowling_team_candidates else cat_encoder.categories_[0][0]
+        bowling_team_candidates = [t for t in encoder.categories_[0] if t != batting_team]
+        bowling_team = bowling_team_candidates[0] if bowling_team_candidates else encoder.categories_[0][0]
 
         # --- City ---
         selected_city_api = st.selectbox("Host City", cities)
-        if selected_city_api not in cat_encoder.categories_[2]:
-            fallback_city = cat_encoder.categories_[2][0]
-            st.warning(f"City '{selected_city_api}' not in training data. Using fallback: {fallback_city}")
-            selected_city = fallback_city
+        if selected_city_api not in encoder.categories_[2]:
+            selected_city = encoder.categories_[2][0]
+            st.warning(f"City '{selected_city_api}' not in training data. Using fallback: {selected_city}")
         else:
             selected_city = selected_city_api
 
-        # --- Target / Score ---
         target = sc.get("target") or st.number_input("Target Score", min_value=1, step=1, value=150)
         score = sc.get("runs") or 0
         overs = sc.get("overs") or 0.0
@@ -157,7 +151,7 @@ if not live_mode:
     with col5:
         wickets = st.number_input("Wickets", min_value=0, max_value=10, step=1)
 
-# --- Prediction Block ---
+# --- Prediction ---
 if overs == 0:
     st.warning("Enter overs > 0 to predict.")
 elif score > target:
@@ -171,27 +165,6 @@ else:
     crr = score / overs if overs > 0 else 0
     rrr = (runs_left * 6) / balls_left if balls_left > 0 else 0
 
-    # --- Validate Categorical Inputs ---
-    preprocessor_name = list(pipe.named_steps.keys())[0]
-    preprocessor = pipe.named_steps[preprocessor_name]
-    cat_encoder = preprocessor.transformers_[0][1]
-
-    cat_cols = ['batting_team', 'bowling_team', 'city']
-    cat_vals = [batting_team, bowling_team, selected_city]
-
-    for i, (col, val) in enumerate(zip(cat_cols, cat_vals)):
-        encoder_categories = cat_encoder.categories_[i]
-        if val not in encoder_categories:
-            fallback = encoder_categories[0]
-            st.warning(f"{col} '{val}' not seen during training. Using fallback: {fallback}")
-            if col == 'batting_team':
-                batting_team = fallback
-            elif col == 'bowling_team':
-                bowling_team = fallback
-            else:
-                selected_city = fallback
-
-    # --- Prepare Input DataFrame ---
     input_df = pd.DataFrame({
         "batting_team": [batting_team],
         "bowling_team": [bowling_team],
@@ -204,7 +177,6 @@ else:
         "rrr": [rrr]
     })
 
-    # --- Predict ---
     try:
         result = pipe.predict_proba(input_df)
         win_prob = float(result[0][1])
@@ -214,7 +186,6 @@ else:
         win_prob = 0.5
         loss_prob = 0.5
 
-    # --- Timeline Update ---
     st.session_state.timeline["overs"].append(round(overs, 1))
     st.session_state.timeline["win_prob"].append(round(win_prob * 100, 1))
 
@@ -252,11 +223,4 @@ else:
     ax.plot(st.session_state.timeline["overs"], st.session_state.timeline["win_prob"],
             marker="o", color=teams[batting_team]['color'])
     ax.set_xlabel("Overs")
-    ax.set_ylabel("Win Probability (%)")
-    ax.set_ylim(0, 100)
-    ax.grid(True)
-    st.pyplot(fig)
-
-# --- Reset Timeline Button ---
-if st.button("🔄 Reset Timeline"):
-    st.session_state.timeline.clear()
+   
