@@ -228,7 +228,7 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-      commentary = []
+    commentary = []
     commentary.append("✅ RRR under control." if rrr <= crr else "⚠️ RRR above CRR.")
     commentary.append("💪 Wickets in hand." if remaining_wickets > 3 else "🛑 Low wickets left.")
     if runs_left <= 12 and balls_left <= 12:
