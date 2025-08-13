@@ -228,6 +228,35 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-    commentary = []
+      commentary = []
     commentary.append("✅ RRR under control." if rrr <= crr else "⚠️ RRR above CRR.")
-    commentary.append("
+    commentary.append("💪 Wickets in hand." if remaining_wickets > 3 else "🛑 Low wickets left.")
+    if runs_left <= 12 and balls_left <= 12:
+        commentary.append("🔥 Endgame: every ball counts.")
+    st.info(" ".join(commentary))
+
+    colA, colB = st.columns(2)
+    with colA:
+        st.image(teams[batting_team]['logo'], width=100)
+        st.markdown(f"<h3 style='color:{teams[batting_team]['color']};'>{batting_team}</h3>", unsafe_allow_html=True)
+        st.progress(win_prob)
+        st.success(f"{round(win_prob * 100, 1)}%")
+    with colB:
+        st.image(teams[bowling_team]['logo'], width=100)
+        st.markdown(f"<h3 style='color:{teams[bowling_team]['color']};'>{bowling_team}</h3>", unsafe_allow_html=True)
+        st.progress(loss_prob)
+        st.error(f"{round(loss_prob * 100, 1)}%")
+
+    st.subheader("📈 Win Probability Timeline")
+    fig, ax = plt.subplots()
+    ax.plot(st.session_state.timeline["overs"], st.session_state.timeline["win_prob"],
+            marker="o", color=teams[batting_team]['color'])
+    ax.set_xlabel("Overs")
+    ax.set_ylabel("Win Probability (%)")
+    ax.set_ylim(0, 100)
+    ax.grid(True)
+    st.pyplot(fig)
+
+# --- Reset Timeline Button ---
+if st.button("🔄 Reset Timeline"):
+    st.session_state.timeline.clear()
