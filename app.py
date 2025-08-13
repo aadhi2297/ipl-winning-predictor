@@ -3,17 +3,21 @@ import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
+import os
 from collections import defaultdict
 
 # --- App Config ---
 st.set_page_config(page_title="IPL Win Predictor (Live)", page_icon="🏏", layout="wide")
 
-# --- Branding ---
-st.sidebar.image("ipl.png", use_column_width=True)
+# --- Path Setup ---
+BASE_DIR = os.path.dirname(__file__)
+pipe_path = os.path.join(BASE_DIR, "pipe.pkl")
+img_path = os.path.join(BASE_DIR, "ipl.png")
 
+# --- Branding ---
+st.sidebar.image(img_path, use_column_width=True)
 st.sidebar.markdown("### Developed by: Aadhi")
 st.sidebar.markdown("Predict live IPL match win probabilities using ML & live cricket data.")
-
 
 # --- Team Data ---
 teams = {
@@ -26,11 +30,9 @@ teams = {
     'Rajasthan Royals': {'color': '#254AA5', 'logo': 'https://upload.wikimedia.org/wikipedia/en/6/60/Rajasthan_Royals_Logo.png'},
     'Delhi Capitals': {'color': '#17499D', 'logo': 'https://upload.wikimedia.org/wikipedia/en/3/3f/Delhi_Capitals_Logo.png'}
 }
-
-# Mapping for live feed team names
 team_name_map = {team.lower(): team for team in teams.keys()}
 
-
+# --- Cities ---
 cities = sorted([
     'Hyderabad', 'Bangalore', 'Mumbai', 'Indore', 'Kolkata', 'Delhi',
     'Chandigarh', 'Jaipur', 'Chennai', 'Cape Town', 'Port Elizabeth',
@@ -41,7 +43,8 @@ cities = sorted([
 ])
 
 # --- Load Model ---
-pipe = pickle.load(open("pipe.pkl", "rb"))
+with open(pipe_path, "rb") as f:
+    pipe = pickle.load(f)
 
 # --- API Config ---
 API_KEY = "9f5166a5-49c1-46cb-abfd-94b542e52215"
@@ -91,29 +94,22 @@ def fetch_score(match_id: str):
 # --- Main UI ---
 st.markdown("<h1 style='text-align:center;color:#ff4b4b;'>🏏 IPL Win Predictor — Live Match Analysis</h1>", unsafe_allow_html=True)
 
-# Sidebar Live Mode
 live_mode = st.sidebar.toggle("Live Mode", value=False)
 poll_secs = st.sidebar.slider("Auto-refresh every (sec)", 10, 120, 30, step=5)
 
-# Get inputs
 if live_mode:
     matches = fetch_live_matches()
     if matches:
         live_idx = st.selectbox("Select Live Match", range(len(matches)), format_func=lambda i: matches[i][1])
         match_id, match_title = matches[live_idx]
         sc = fetch_score(match_id)
-
-        # Auto-map teams
         batting_team = team_name_map.get((sc.get("team") or "").lower(), list(teams.keys())[0])
         bowling_team = [t for t in teams.keys() if t != batting_team][0]
-
         selected_city = st.selectbox("Host City", cities)
         target = sc.get("target") or st.number_input("Target Score", min_value=1, step=1, value=150)
         score = sc.get("runs") or 0
         overs = sc.get("overs") or 0.0
         wickets = sc.get("wkts") or 0
-
-        st_autorefresh = st.experimental_rerun if poll_secs else None
     else:
         st.warning("No live matches right now.")
         live_mode = False
@@ -134,7 +130,7 @@ if not live_mode:
     with col5:
         wickets = st.number_input("Wickets", min_value=0, max_value=10, step=1)
 
-# Prediction
+# --- Prediction ---
 if overs == 0:
     st.warning("Enter overs > 0 to predict.")
 elif score > target:
@@ -167,7 +163,6 @@ else:
     st.session_state.timeline["overs"].append(round(overs, 1))
     st.session_state.timeline["win_prob"].append(round(win_prob * 100, 1))
 
-    # Match Situation Card
     st.markdown(f"""
     <div style="background:#f9f9f9;padding:10px;border-radius:10px;">
     <b>Batting:</b> {batting_team} | <b>Bowling:</b> {bowling_team} | <b>City:</b> {selected_city}<br>
@@ -177,7 +172,6 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-    # Commentary
     commentary = []
     commentary.append("✅ RRR under control." if rrr <= crr else "⚠️ RRR above CRR.")
     commentary.append("💪 Wickets in hand." if remaining_wickets > 3 else "🛑 Low wickets left.")
@@ -185,7 +179,6 @@ else:
         commentary.append("🔥 Endgame: every ball counts.")
     st.info(" ".join(commentary))
 
-    # Probability Display
     colA, colB = st.columns(2)
     with colA:
         st.image(teams[batting_team]['logo'], width=100)
@@ -198,7 +191,6 @@ else:
         st.progress(loss_prob)
         st.error(f"{round(loss_prob * 100, 1)}%")
 
-    # Timeline Chart
     st.subheader("📈 Win Probability Timeline")
     fig, ax = plt.subplots()
     ax.plot(st.session_state.timeline["overs"], st.session_state.timeline["win_prob"],
