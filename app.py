@@ -145,6 +145,25 @@ else:
     crr = score / overs if overs > 0 else 0
     rrr = (runs_left * 6) / balls_left if balls_left > 0 else 0
 
+    # --- Ensure categorical values are valid ---
+    cat_features = ['batting_team', 'bowling_team', 'city']
+    for col, val in zip(cat_features, [batting_team, bowling_team, selected_city]):
+        if col in pipe.named_steps['pre'].transformers_[0][1].categories_[0]:
+            continue
+        # Fallback to first known category
+        if col == 'batting_team' or col == 'bowling_team':
+            fallback = pipe.named_steps['pre'].transformers_[0][1].categories_[0][0]
+            st.warning(f"{col} '{val}' not seen during training. Using fallback: {fallback}")
+            if col == 'batting_team':
+                batting_team = fallback
+            else:
+                bowling_team = fallback
+        elif col == 'city':
+            fallback = pipe.named_steps['pre'].transformers_[0][1].categories_[0][0]
+            st.warning(f"{col} '{val}' not seen during training. Using fallback: {fallback}")
+            selected_city = fallback
+
+    # Prepare input
     input_df = pd.DataFrame({
         "batting_team": [batting_team],
         "bowling_team": [bowling_team],
@@ -157,13 +176,19 @@ else:
         "rrr": [rrr]
     })
 
-    result = pipe.predict_proba(input_df)
-    win_prob = float(result[0][1])
-    loss_prob = float(result[0][0])
+    try:
+        result = pipe.predict_proba(input_df)
+        win_prob = float(result[0][1])
+        loss_prob = float(result[0][0])
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+        win_prob = 0.5
+        loss_prob = 0.5
 
     st.session_state.timeline["overs"].append(round(overs, 1))
     st.session_state.timeline["win_prob"].append(round(win_prob * 100, 1))
 
+    # --- Display results ---
     st.markdown(f"""
     <div style="background:#f9f9f9;padding:10px;border-radius:10px;">
     <b>Batting:</b> {batting_team} | <b>Bowling:</b> {bowling_team} | <b>City:</b> {selected_city}<br>
